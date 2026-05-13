@@ -1,0 +1,39 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Note: .terraform.lock.hcl SHOULD be committed (provider version pinning for the team/CI).
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pytest_cache/
+.pytest_cache/
+venv/
+.env
+.env.*
+.python-version
+
+# Node
+node_modules/
+dist/
+build/
+.vite/
+
+# AWS
+.aws/
+credentials
+config
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
