@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>fiveline 운영 대시보드</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800">
+
+  <header class="bg-slate-900 text-white py-4 px-6 shadow-lg">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <h1 class="text-2xl font-bold">🎯 fiveline 운영 대시보드</h1>
+      <div class="text-sm text-slate-300" id="now">로딩 중...</div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-6 py-8 space-y-8">
+
+    <!-- 1. 오늘 요약 -->
+    <section>
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-baseline">
+          <h2 class="text-xl font-semibold">📊 오늘 운영 요약</h2>
+          <span id="summary-source" class="text-xs text-slate-400 ml-2">출처: 데이터 없음</span>
+        </div>
+        <button onclick="loadData()" class="px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">
+          새로고침
+        </button>
+      </div>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-white rounded-lg shadow p-5">
+          <div class="text-xs text-slate-500 mb-1">총 주문</div>
+          <div class="text-2xl font-bold" id="card-total">-</div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-5">
+          <div class="text-xs text-slate-500 mb-1">실패율</div>
+          <div class="text-2xl font-bold text-red-600" id="card-failure">-</div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-5">
+          <div class="text-xs text-slate-500 mb-1">평균 응답시간</div>
+          <div class="text-2xl font-bold" id="card-avg">-</div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-5">
+          <div class="text-xs text-slate-500 mb-1">활성 알람</div>
+          <div class="text-2xl font-bold text-orange-600" id="card-alarm">-</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 1-B. 로그 분석 카드 (Summary Writer가 채운 실데이터) -->
+    <section>
+      <h2 class="text-xl font-semibold mb-4">📈 로그 분석 (실데이터)</h2>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-white rounded-lg shadow p-5">
+          <div class="text-xs text-slate-500 mb-1">총 로그 이벤트</div>
+          <div class="text-2xl font-bold" id="card-log-events">-</div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-5">
+          <div class="text-xs text-slate-500 mb-1">에러율</div>
+          <div class="text-2xl font-bold text-red-600" id="card-log-error-rate">-</div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-5">
+          <div class="text-xs text-slate-500 mb-1">피크 시간</div>
+          <div class="text-2xl font-bold" id="card-log-peak">-</div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-5">
+          <div class="text-xs text-slate-500 mb-1">최고 에러 스트림</div>
+          <div class="text-lg font-bold text-orange-600 truncate" id="card-log-top-stream" title="-">-</div>
+          <div class="text-xs text-slate-400 mt-1" id="card-log-top-stream-pct">-</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 1-C. 시간대별 트렌드 차트 -->
+    <section class="bg-white rounded-lg shadow p-6">
+      <h2 class="text-xl font-semibold mb-4">📊 시간대별 로그·에러 추이</h2>
+      <canvas id="hourly-chart" height="80"></canvas>
+    </section>
+
+    <!-- 2. 리소스 점검 -->
+    <section class="grid md:grid-cols-2 gap-6">
+      <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-xl font-semibold mb-4">🔍 리소스 점검 결과</h2>
+        <canvas id="resource-chart"></canvas>
+      </div>
+      <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-xl font-semibold mb-4">📋 상세 항목</h2>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-100">
+              <tr>
+                <th class="text-left p-2">타입</th>
+                <th class="text-left p-2">리소스</th>
+                <th class="text-left p-2">사유</th>
+              </tr>
+            </thead>
+            <tbody id="resource-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Athena 쿼리 결과 (미리 정한 4개 페이지네이션) -->
+    <section class="bg-white rounded-lg shadow p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-semibold">💻 Athena 쿼리 결과</h2>
+        <div class="flex items-center gap-2">
+          <button onclick="prevQuery()" class="px-3 py-1 bg-slate-200 rounded hover:bg-slate-300">◀</button>
+          <span id="sql-label" class="text-sm font-mono">-</span>
+          <button onclick="nextQuery()" class="px-3 py-1 bg-slate-200 rounded hover:bg-slate-300">▶</button>
+        </div>
+      </div>
+      <textarea id="sql-input" readonly class="w-full p-3 bg-slate-50 border border-slate-300 rounded font-mono text-xs" rows="2"></textarea>
+      <div id="sql-status" class="text-sm text-slate-500 my-2"></div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm" id="sql-result"></table>
+      </div>
+    </section>
+
+    <!-- 3-B. 최근 자동 리포트 -->
+    <section class="bg-white rounded-lg shadow p-6">
+      <h2 class="text-xl font-semibold mb-4">📰 최근 자동 생성 리포트</h2>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-100">
+            <tr>
+              <th class="text-left p-2">날짜</th>
+              <th class="text-left p-2">타입</th>
+              <th class="text-left p-2">제목</th>
+              <th class="text-left p-2">S3</th>
+            </tr>
+          </thead>
+          <tbody id="reports-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 4. AI 어시스턴트 샘플 (대화 미리 캐싱) -->
+    <section class="bg-white rounded-lg shadow p-6">
+      <h2 class="text-xl font-semibold mb-4">🤖 AI 어시스턴트 (LangGraph V1) — 샘플 대화</h2>
+      <p class="text-xs text-slate-500 mb-3">
+        실시간 채팅은 콘솔의 Bedrock Agent Test에서 가능합니다. 아래는 미리 수집한 샘플입니다.
+      </p>
+      <div id="chat-log" class="space-y-3 max-h-96 overflow-y-auto"></div>
+    </section>
+
+  </main>
+
+  <footer class="text-center text-xs text-slate-500 py-4">
+    fiveline · 데이터 파이프라인 운영 대시보드 · Static JSON (S3) 방식
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
