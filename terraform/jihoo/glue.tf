@@ -235,8 +235,12 @@ resource "aws_glue_job" "cleansed_to_aggregated" {
   glue_version      = "4.0"
   worker_type       = "G.1X"
   number_of_workers = 2
-  timeout           = 10
+  timeout           = 30 # 누적 데이터 증가 대응 (어제 8분 → 오늘 10분 초과)
   max_retries       = 0
+
+  execution_property {
+    max_concurrent_runs = 2 # EventBridge + 수동 동시 호출 대응
+  }
 
   default_arguments = {
     "--catalog_db"                       = aws_glue_catalog_database.data_lake.name

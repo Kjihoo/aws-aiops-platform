@@ -87,6 +87,11 @@ def handler(event, context):
     if glue_state != "SUCCEEDED":
         return {"ok": False, "failedAt": "glue_etl", "steps": steps}
 
+    # ②.5 Glue가 만든 새 파티션을 Catalog에 등록 (Athena·Summary Writer가 보게)
+    for tbl in ["events_hourly", "resource_findings_daily"]:
+        m = msck_repair(tbl)
+        steps.append({"step": f"msck_{tbl}", **m})
+
     # ③ Summary Writer
     sw = invoke_lambda(SUMMARY_WRITER)
     steps.append({"step": "summary_writer", **sw})
