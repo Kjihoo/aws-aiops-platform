@@ -38,7 +38,10 @@ resource "aws_iam_role_policy" "langgraph_agent_custom" {
           "bedrock:Converse",
           "bedrock:ConverseStream",
         ]
-        Resource = "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-*"
+        Resource = [
+          "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-*",
+          "arn:aws:bedrock:*::foundation-model/amazon.titan-embed-*",
+        ]
       },
       {
         Sid    = "MarketplaceSubscribe"
@@ -60,6 +63,7 @@ resource "aws_iam_role_policy" "langgraph_agent_custom" {
         Resource = [
           aws_dynamodb_table.dashboard_summary.arn,
           aws_dynamodb_table.check_results.arn,
+          aws_dynamodb_table.report_embeddings.arn,
         ]
       },
       {
@@ -114,7 +118,7 @@ resource "aws_lambda_function" "langgraph_agent" {
   function_name = "mzc-pj4-${local.owner}-langgraph-agent-${local.env}"
   role          = aws_iam_role.langgraph_agent.arn
   package_type  = "Image"
-  image_uri     = "089955620282.dkr.ecr.ap-northeast-2.amazonaws.com/fiveline-ecr/platform:langgraph-v1"
+  image_uri     = "089955620282.dkr.ecr.ap-northeast-2.amazonaws.com/fiveline-ecr/platform:langgraph-v2-rag"
 
   timeout     = 300
   memory_size = 1024
@@ -126,6 +130,8 @@ resource "aws_lambda_function" "langgraph_agent" {
       ALARM_TABLE     = "alarm_history"
       ATHENA_DB       = aws_glue_catalog_database.data_lake.name
       ATHENA_OUTPUT   = "s3://${aws_s3_bucket.data_lake.bucket}/athena-results/"
+      EMBED_TABLE     = aws_dynamodb_table.report_embeddings.name
+      EMBED_MODEL     = "amazon.titan-embed-text-v2:0"
     }
   }
 

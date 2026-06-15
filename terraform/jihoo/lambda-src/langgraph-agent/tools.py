@@ -1,9 +1,10 @@
 """
-LangGraph Agent Tools — DynamoDB·Athena 접근 도구 4개
+LangGraph Agent Tools — DynamoDB·Athena 접근 도구 + 경량 RAG (search_reports)
 LangChain @tool 데코레이터로 정의 → graph.py에서 bind_tools로 LLM에 연결
 """
 
 import json
+import math
 import os
 import time
 from decimal import Decimal
@@ -18,9 +19,12 @@ CHECK_TABLE     = os.environ["CHECK_TABLE"]
 ALARM_TABLE     = os.environ.get("ALARM_TABLE", "")
 ATHENA_DB       = os.environ["ATHENA_DB"]
 ATHENA_OUTPUT   = os.environ["ATHENA_OUTPUT"]
+EMBED_TABLE     = os.environ.get("EMBED_TABLE", "")
+EMBED_MODEL     = os.environ.get("EMBED_MODEL", "amazon.titan-embed-text-v2:0")
 
-ddb    = boto3.resource("dynamodb")
-athena = boto3.client("athena")
+ddb     = boto3.resource("dynamodb")
+athena  = boto3.client("athena")
+bedrock = boto3.client("bedrock-runtime")
 
 
 def _to_json(obj):
@@ -197,4 +201,74 @@ def get_metrics(minutes: int = 15) -> str:
         return json.dumps({"error": str(e)})
 
 
-TOOLS = [get_dashboard_summary, get_resource_check, get_recent_alarms, get_metrics, query_athena]
+@tool
+def search_reports(question: str, top_k: int = 3) -> str:
+    """과거 일간 운영 리포트(마크다운)를 의미 기반(RAG)으로 검색.
+    "지난주 RDS 지연 언급 있었어?", "최근 트래픽 이상 패턴 보고서?" 같은
+    과거 시점·트렌드 질문에 사용.
+
+    동작: 질문을 Bedrock Titan Embed v2로 1024차원 벡터화 → DDB report_embeddings
+    스캔 → 코사인 유사도 Top-K 리포트 반환 (각 미리보기 1500자).
+
+    Args:
+        question: 검색 질의 (자연어 한국어/영어).
+        top_k: 반환할 리포트 수 (기본 3, 최대 5).
+    """
+    if not EMBED_TABLE:
+        return json.dumps({"error": "report_embeddings 테이블 미설정"})
+
+    top_k = max(1, min(int(top_k), 5))
+
+    # 1) 질문 임베딩
+    try:
+        resp = bedrock.invoke_model(
+            modelId=EMBED_MODEL,
+            body=json.dumps({"inputText": question, "dimensions": 1024, "normalize": True}),
+        )
+        q_vec = json.loads(resp["body"].read())["embedding"]
+    except Exception as e:
+        return json.dumps({"error": f"임베딩 실패: {e}"})
+
+    # 2) DDB Scan (소규모 — 30~100건 가정)
+    items = []
+    last_key = None
+    while True:
+        kwargs = {}
+        if last_key:
+            kwargs["ExclusiveStartKey"] = last_key
+        resp = ddb.Table(EMBED_TABLE).scan(**kwargs)
+        items.extend(resp.get("Items", []))
+        last_key = resp.get("LastEvaluatedKey")
+        if not last_key:
+            break
+
+    if not items:
+        return json.dumps({"results": [], "message": "임베딩된 리포트 없음 (Embedder Lambda 미실행)"})
+
+    # 3) 코사인 유사도 (normalize=True라 내적 = 코사인)
+    def cos(a, b):
+        return sum(float(x) * float(y) for x, y in zip(a, b))
+
+    scored = []
+    for it in items:
+        emb = it.get("embedding") or []
+        if not emb:
+            continue
+        score = cos(q_vec, emb)
+        scored.append((score, it))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = scored[:top_k]
+
+    results = [{
+        "reportId": it["reportId"],
+        "reportDate": it.get("reportDate", ""),
+        "score": round(float(score), 4),
+        "s3Key": it.get("s3Key", ""),
+        "preview": (it.get("content") or "")[:1500],
+    } for score, it in top]
+
+    return json.dumps({"question": question, "results": results}, ensure_ascii=False)
+
+
+TOOLS = [get_dashboard_summary, get_resource_check, get_recent_alarms, get_metrics, query_athena, search_reports]

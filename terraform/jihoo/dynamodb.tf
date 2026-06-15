@@ -120,3 +120,24 @@ resource "aws_dynamodb_table" "report_metadata" {
     Name    = "mzc-pj4-${local.owner}-report-metadata-${local.env}"
   }
 }
+
+# ── DynamoDB: Report Embeddings (경량 RAG) ───────────────────────────────────
+# Bedrock Titan Embed v2 1024차원 벡터 + 마크다운 미리보기 저장
+# LangGraph search_reports 도구가 Scan + 코사인 유사도로 Top-K 검색
+
+resource "aws_dynamodb_table" "report_embeddings" {
+  name         = "mzc-pj4-${local.owner}-report-embeddings-${local.env}"
+  billing_mode = "PAY_PER_REQUEST"
+
+  hash_key = "reportId"
+
+  attribute {
+    name = "reportId"
+    type = "S"
+  }
+
+  tags = {
+    Service = "data-lake"
+    Name    = "mzc-pj4-${local.owner}-report-embeddings-${local.env}"
+  }
+}
