@@ -109,18 +109,23 @@ def query_athena_endpoint(body):
 
 
 def chat_endpoint(body):
-    """LangGraph Lambda 호출 → 자연어 답변"""
+    """LangGraph Lambda 호출 → 자연어 답변 (멀티턴 session_id 지원)"""
     user_input = (body or {}).get("input", "")
+    session_id = (body or {}).get("session_id", "")
     if not user_input:
         return _response(400, {"error": "input 필수"})
+
+    payload = {"input": user_input}
+    if session_id:
+        payload["session_id"] = session_id
 
     resp = lambda_.invoke(
         FunctionName=LANGGRAPH_LAMBDA,
         InvocationType="RequestResponse",
-        Payload=json.dumps({"input": user_input}).encode("utf-8"),
+        Payload=json.dumps(payload).encode("utf-8"),
     )
-    payload = json.loads(resp["Payload"].read())
-    return _response(200, payload)
+    result = json.loads(resp["Payload"].read())
+    return _response(200, result)
 
 
 # ── Router ──────────────────────────────────────────────────────────────────

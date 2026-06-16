@@ -1,10 +1,19 @@
 // Static JSON 방식 — Lambda 공개 호출 없이 S3에서 직접 가져옴
 const DATA_URL = "./data.json";
 
+// 채팅 API (Dashboard API Lambda Function URL) — terraform output dashboard_api_url 값
+// data.json 에 apiBase 필드로도 전달 가능 (DashboardBuilder가 채워줌)
+let CHAT_API_BASE = "";
+
 let resourceChart = null;
 let hourlyChart = null;
 let cachedData = null;
 let currentQueryIdx = 0;
+
+// 채팅 세션 (localStorage 유지)
+const SESSION_KEY = "fiveline_chat_session_id";
+let chatSessionId = localStorage.getItem(SESSION_KEY) || "";
+let chatBusy = false;
 
 // ── 현재 시각 ───────────────────────────────────────────────────────────────
 function updateNow() {
@@ -219,28 +228,136 @@ function renderReports() {
   });
 }
 
-// ── 4. 채팅 샘플 ────────────────────────────────────────────────────────────
+// ── 4. 채팅 ─────────────────────────────────────────────────────────────────
 function renderChatSample() {
-  const samples = cachedData?.chatSamples || [];
+  // API base URL 우선순위: data.json 의 chatApiBase > 비어있음
+  CHAT_API_BASE = cachedData?.chatApiBase || CHAT_API_BASE || "";
+  updateSessionInfo();
+  // 초기 안내 메시지 (아직 비어있을 때만)
   const log = document.getElementById("chat-log");
-  log.innerHTML = "";
-  samples.forEach((s) => {
-    appendChat("user", s.question);
-    appendChat("assistant", s.answer);
-  });
+  if (log && !log.dataset.initialized) {
+    log.dataset.initialized = "1";
+    appendChat("assistant",
+      "안녕하세요. 운영 어시스턴트입니다. 한국어로 자유롭게 질의해주세요.\n\n예시 — 위 추천 질문 버튼을 누르시거나, 직접 입력하실 수 있습니다.\n같은 세션에서는 후속 질문 (\"그거 자세히\", \"원인은?\") 도 가능합니다."
+    );
+  }
 }
 
-function appendChat(role, content) {
+function appendChat(role, content, opts = {}) {
   const log = document.getElementById("chat-log");
   const div = document.createElement("div");
   div.className = role === "user" ? "flex justify-end" : "flex justify-start";
+
+  let badge = "";
+  if (opts.tools && opts.tools.length > 0) {
+    badge = `<div class="text-xs text-slate-500 mb-1">🔧 도구: ${opts.tools.join(", ")}</div>`;
+  }
+
   div.innerHTML = `
-    <div class="${role === "user" ? "bg-purple-100" : "bg-slate-100"} px-4 py-2 rounded-lg max-w-3xl whitespace-pre-wrap">
-      ${content}
+    <div class="${role === "user" ? "bg-purple-100" : "bg-white border border-slate-200 shadow-sm"} px-4 py-2 rounded-lg max-w-3xl whitespace-pre-wrap">
+      ${badge}
+      <div>${escapeHtml(content)}</div>
     </div>
   `;
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
+  return div;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+  );
+}
+
+function updateSessionInfo() {
+  const info = document.getElementById("chat-session-info");
+  if (!info) return;
+  if (chatSessionId) {
+    const short = chatSessionId.slice(0, 8);
+    info.textContent = `세션: ${short}... (멀티턴 작동 중) · API: ${CHAT_API_BASE ? "OK" : "❌ 미설정"}`;
+  } else {
+    info.textContent = `세션: 새로 시작 (첫 질문 시 자동 생성) · API: ${CHAT_API_BASE ? "OK" : "❌ 미설정"}`;
+  }
+}
+
+function resetChatSession() {
+  chatSessionId = "";
+  localStorage.removeItem(SESSION_KEY);
+  const log = document.getElementById("chat-log");
+  log.innerHTML = "";
+  log.dataset.initialized = "";
+  updateSessionInfo();
+  renderChatSample(); // 안내 메시지 다시
+}
+
+function sendSample(text) {
+  const input = document.getElementById("chat-input");
+  input.value = text;
+  document.getElementById("chat-form").requestSubmit();
+}
+
+async function sendChat(e) {
+  if (e) e.preventDefault();
+  if (chatBusy) return;
+
+  const input = document.getElementById("chat-input");
+  const text = (input.value || "").trim();
+  if (!text) return;
+
+  if (!CHAT_API_BASE) {
+    appendChat("assistant", "⚠️ API URL이 설정되지 않았습니다. 관리자에게 문의하세요.");
+    return;
+  }
+
+  // UI: 사용자 메시지 표시 + 입력창 비우기
+  appendChat("user", text);
+  input.value = "";
+  chatBusy = true;
+  document.getElementById("chat-send-btn").textContent = "...";
+
+  // 로딩 placeholder
+  const loading = appendChat("assistant", "🤔 분석 중... (20~40초)");
+
+  try {
+    const url = `${CHAT_API_BASE.replace(/\/$/, "")}/chat`;
+    const body = { input: text };
+    if (chatSessionId) body.session_id = chatSessionId;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    // session_id 갱신 + localStorage 저장
+    if (data.session_id) {
+      chatSessionId = data.session_id;
+      localStorage.setItem(SESSION_KEY, chatSessionId);
+      updateSessionInfo();
+    }
+
+    // 사용된 도구 추출 (trace에서)
+    const tools = (data.trace || [])
+      .filter((m) => m.tool_calls)
+      .flatMap((m) => m.tool_calls.map((tc) => tc.name));
+    const uniqueTools = [...new Set(tools)];
+
+    // 로딩 placeholder 제거
+    loading.remove();
+
+    appendChat("assistant", data.answer || "(빈 응답)", { tools: uniqueTools });
+  } catch (err) {
+    loading.remove();
+    appendChat("assistant", `❌ 오류: ${err.message}`);
+    console.error(err);
+  } finally {
+    chatBusy = false;
+    document.getElementById("chat-send-btn").textContent = "전송";
+  }
 }
 
 // 초기 + 1분마다 새로고침 (data.json은 EventBridge가 5분마다 갱신)

@@ -208,6 +208,7 @@ def get_sample_chat():
 def handler(event, context):
     data = {
         "generatedAt":   datetime.now(timezone.utc).isoformat(),
+        "chatApiBase":   os.environ.get("CHAT_API_BASE", ""),  # 브라우저 챗봇이 사용할 API URL
         "summary":       get_summary_today(),
         "resourceCheck": get_resource_check(),
         "hourlyChart":   get_hourly_chart(),

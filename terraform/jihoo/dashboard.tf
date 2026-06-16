@@ -315,6 +315,7 @@ resource "aws_lambda_function" "dashboard_builder" {
       ATHENA_OUTPUT              = "s3://${aws_s3_bucket.data_lake.bucket}/athena-results/"
       BUCKET_NAME                = aws_s3_bucket.dashboard.bucket
       JSON_KEY                   = "data.json"
+      CHAT_API_BASE              = aws_lambda_function_url.dashboard_api.function_url
     }
   }
 
