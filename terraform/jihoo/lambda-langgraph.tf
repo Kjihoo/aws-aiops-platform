@@ -67,6 +67,12 @@ resource "aws_iam_role_policy" "langgraph_agent_custom" {
         ]
       },
       {
+        Sid      = "DynamoDBConversationHistory"
+        Effect   = "Allow"
+        Action   = ["dynamodb:GetItem", "dynamodb:PutItem"]
+        Resource = aws_dynamodb_table.conversation_history.arn
+      },
+      {
         Sid      = "DynamoDBReadMonitoring"
         Effect   = "Allow"
         Action   = ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:Scan"]
@@ -132,6 +138,9 @@ resource "aws_lambda_function" "langgraph_agent" {
       ATHENA_OUTPUT   = "s3://${aws_s3_bucket.data_lake.bucket}/athena-results/"
       EMBED_TABLE     = aws_dynamodb_table.report_embeddings.name
       EMBED_MODEL     = "amazon.titan-embed-text-v2:0"
+      CONVERSATION_TABLE     = aws_dynamodb_table.conversation_history.name
+      CONVERSATION_TTL_DAYS  = "30"
+      MAX_HISTORY_MESSAGES   = "20"
     }
   }
 

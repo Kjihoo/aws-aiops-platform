@@ -141,3 +141,29 @@ resource "aws_dynamodb_table" "report_embeddings" {
     Name    = "mzc-pj4-${local.owner}-report-embeddings-${local.env}"
   }
 }
+
+# ── DynamoDB: Conversation History (LangGraph Checkpointer Lite) ──────────────
+# session_id 별로 이전 대화 메시지 저장 → 멀티턴 대화 가능
+# TTL 30일 자동 만료 (오래된 세션 자동 정리)
+
+resource "aws_dynamodb_table" "conversation_history" {
+  name         = "mzc-pj4-${local.owner}-conversation-history-${local.env}"
+  billing_mode = "PAY_PER_REQUEST"
+
+  hash_key = "session_id"
+
+  attribute {
+    name = "session_id"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expires_at"
+    enabled        = true
+  }
+
+  tags = {
+    Service = "data-lake"
+    Name    = "mzc-pj4-${local.owner}-conversation-history-${local.env}"
+  }
+}
