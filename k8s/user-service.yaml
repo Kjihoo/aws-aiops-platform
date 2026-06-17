@@ -1,0 +1,76 @@
+# ───────────────────────────────────────
+# Namespace
+# ───────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fiveline
+
+---
+# ───────────────────────────────────────
+# Deployment
+# ───────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: fiveline
+  labels:
+    app: user-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+        - name: user-service
+          image: 089955620282.dkr.ecr.ap-northeast-2.amazonaws.com/mzc-pj4-jihoo/user-service:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DATABASE_URL
+              value: "postgresql+psycopg://placeholder:placeholder@placeholder:5432/aiops"
+            - name: DB_SCHEMA
+              value: user_schema
+            - name: JWT_SECRET
+              value: dev-only-jwt-secret-change-in-prod
+            - name: JWT_ALGORITHM
+              value: HS256
+            - name: JWT_EXPIRE_MINUTES
+              value: "60"
+            - name: SERVICE_NAME
+              value: user-service
+            - name: ENVIRONMENT
+              value: dev
+            - name: LOG_LEVEL
+              value: INFO
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+---
+# ───────────────────────────────────────
+# Service
+# ───────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  namespace: fiveline
+spec:
+  selector:
+    app: user-service
+  ports:
+    - port: 80
+      targetPort: 8000
+      protocol: TCP
+  type: ClusterIP

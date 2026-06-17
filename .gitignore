@@ -37,3 +37,22 @@ config
 .idea/
 *.swp
 *.swo
+
+# ── 다른 팀원 별도 Git repo (대시보드용 로컬 클론) ──
+backend/
+frontend/
+
+# ── 개인 메모 (공개 금지) ──
+기록/
+자료/
+
+# ── Lambda 빌드 산출물 ──
+terraform/jihoo/lambda-src/*.zip
+
+# ── 임시 IAM trust/policy JSON (재생성 가능) ──
+terraform/jihoo/fluentbit-trust.json
+terraform/jihoo/fluentbit-policy.json
+terraform/jihoo/test-row.json
+
+# ── kubeconfig ──
+.kube/
