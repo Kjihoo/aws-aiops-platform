@@ -173,106 +173,63 @@ resource "aws_lambda_function" "dashboard_api" {
   }
 }
 
-# ── Lambda Function URL (CloudFront 뒤에서 AWS_IAM 인증) ─────────────────────
-# MZC SCP가 NONE 공개 호출을 차단해서 CloudFront 프록시 + AWS_IAM 인증으로 우회.
-# CloudFront가 Origin Access Control로 SigV4 서명하여 호출.
+# ── API Gateway HTTP API (SCP 우회 — Function URL 대신 API Gateway 사용) ─────
+# MZC SCP가 Lambda Function URL 공개 호출을 차단해서 API Gateway HTTP API로 우회.
+# CloudFront + OAC는 POST body 서명 이슈로 실패 → API Gateway가 가장 안정적인 패턴.
 
-resource "aws_lambda_function_url" "dashboard_api" {
-  function_name      = aws_lambda_function.dashboard_api.function_name
-  authorization_type = "AWS_IAM"
+resource "aws_apigatewayv2_api" "dashboard_api" {
+  name          = "mzc-pj4-${local.owner}-dashboard-api-${local.env}"
+  protocol_type = "HTTP"
+  description   = "Dashboard API HTTP endpoint (SCP-friendly, proxies to dashboard-api Lambda)"
 
-  cors {
+  cors_configuration {
     allow_origins = ["*"]
-    allow_methods = ["GET", "POST"]
+    allow_methods = ["GET", "POST", "OPTIONS"]
     allow_headers = ["content-type"]
     max_age       = 86400
-  }
-}
-
-# CloudFront → Lambda Function URL 호출 권한 (OAC로 서명된 요청)
-resource "aws_lambda_permission" "dashboard_api_url_cloudfront" {
-  statement_id           = "AllowCloudFrontInvoke"
-  action                 = "lambda:InvokeFunctionUrl"
-  function_name          = aws_lambda_function.dashboard_api.function_name
-  principal              = "cloudfront.amazonaws.com"
-  source_arn             = aws_cloudfront_distribution.dashboard_api.arn
-  function_url_auth_type = "AWS_IAM"
-}
-
-# ── CloudFront Origin Access Control (SigV4 자동 서명) ──────────────────────
-
-resource "aws_cloudfront_origin_access_control" "dashboard_api" {
-  name                              = "mzc-pj4-${local.owner}-dashboard-api-oac-${local.env}"
-  description                       = "Sign requests to Lambda Function URL with AWS_IAM"
-  origin_access_control_origin_type = "lambda"
-  signing_behavior                  = "always"
-  signing_protocol                  = "sigv4"
-}
-
-# ── CloudFront Distribution (Function URL 앞 CDN 프록시) ────────────────────
-
-locals {
-  # Function URL: https://xxxx.lambda-url.ap-northeast-2.on.aws/
-  # CloudFront origin은 hostname만 필요 → 정규식으로 추출
-  dashboard_api_origin_host = replace(replace(aws_lambda_function_url.dashboard_api.function_url, "https://", ""), "/", "")
-}
-
-resource "aws_cloudfront_distribution" "dashboard_api" {
-  enabled         = true
-  is_ipv6_enabled = true
-  comment         = "Dashboard API proxy → Lambda Function URL (AWS_IAM via OAC)"
-  price_class     = "PriceClass_200" # 한국·미국·유럽·일본 (저렴)
-
-  origin {
-    domain_name              = local.dashboard_api_origin_host
-    origin_id                = "lambda-function-url"
-    origin_access_control_id = aws_cloudfront_origin_access_control.dashboard_api.id
-
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "https-only"
-      origin_ssl_protocols   = ["TLSv1.2"]
-    }
-  }
-
-  default_cache_behavior {
-    target_origin_id       = "lambda-function-url"
-    allowed_methods        = ["GET", "HEAD", "OPTIONS", "PUT", "PATCH", "POST", "DELETE"]
-    cached_methods         = ["GET", "HEAD"]
-    viewer_protocol_policy = "redirect-to-https"
-    compress               = true
-
-    # 캐시 비활성화 (모든 채팅 요청을 Lambda로 통과)
-    cache_policy_id          = data.aws_cloudfront_cache_policy.disabled.id
-    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
-  }
-
-  restrictions {
-    geo_restriction {
-      restriction_type = "none"
-    }
-  }
-
-  viewer_certificate {
-    cloudfront_default_certificate = true
   }
 
   tags = {
     Service = "dashboard"
-    Name    = "mzc-pj4-${local.owner}-dashboard-api-cdn-${local.env}"
+    Name    = "mzc-pj4-${local.owner}-dashboard-api-${local.env}"
   }
 }
 
-# AWS 관리형 캐시 정책: CachingDisabled
-data "aws_cloudfront_cache_policy" "disabled" {
-  name = "Managed-CachingDisabled"
+# Lambda 통합 (AWS_PROXY)
+resource "aws_apigatewayv2_integration" "dashboard_api_lambda" {
+  api_id                 = aws_apigatewayv2_api.dashboard_api.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.dashboard_api.invoke_arn
+  payload_format_version = "2.0"
+  integration_method     = "POST"
 }
 
-# AWS 관리형 origin request 정책: AllViewerExceptHostHeader
-# (Host 헤더 제외 — Lambda Function URL이 자체 호스트 검증하므로)
-data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
-  name = "Managed-AllViewerExceptHostHeader"
+# 모든 경로/메서드 catch-all
+resource "aws_apigatewayv2_route" "dashboard_api_default" {
+  api_id    = aws_apigatewayv2_api.dashboard_api.id
+  route_key = "$default"
+  target    = "integrations/${aws_apigatewayv2_integration.dashboard_api_lambda.id}"
+}
+
+# Default stage (자동 배포)
+resource "aws_apigatewayv2_stage" "dashboard_api_default" {
+  api_id      = aws_apigatewayv2_api.dashboard_api.id
+  name        = "$default"
+  auto_deploy = true
+
+  tags = {
+    Service = "dashboard"
+    Name    = "mzc-pj4-${local.owner}-dashboard-api-stage-${local.env}"
+  }
+}
+
+# API Gateway → Lambda 호출 권한
+resource "aws_lambda_permission" "dashboard_api_apigw" {
+  statement_id  = "AllowAPIGatewayInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.dashboard_api.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.dashboard_api.execution_arn}/*/*"
 }
 
 # ── 출력 ────────────────────────────────────────────────────────────────────
@@ -283,13 +240,8 @@ output "dashboard_url" {
 }
 
 output "dashboard_api_url" {
-  value       = "https://${aws_cloudfront_distribution.dashboard_api.domain_name}/"
-  description = "Dashboard API CloudFront URL (SCP 우회용 프록시, dashboard-builder가 CHAT_API_BASE로 사용)"
-}
-
-output "dashboard_api_function_url" {
-  value       = aws_lambda_function_url.dashboard_api.function_url
-  description = "원본 Function URL (AWS_IAM, CloudFront만 호출 가능)"
+  value       = "${aws_apigatewayv2_api.dashboard_api.api_endpoint}/"
+  description = "Dashboard API Gateway URL (dashboard-builder가 CHAT_API_BASE로 사용)"
 }
 
 # ── Dashboard Builder Lambda (Static JSON 생성, EventBridge가 trigger) ───────
@@ -399,7 +351,7 @@ resource "aws_lambda_function" "dashboard_builder" {
       ATHENA_OUTPUT              = "s3://${aws_s3_bucket.data_lake.bucket}/athena-results/"
       BUCKET_NAME                = aws_s3_bucket.dashboard.bucket
       JSON_KEY                   = "data.json"
-      CHAT_API_BASE              = "https://${aws_cloudfront_distribution.dashboard_api.domain_name}/"
+      CHAT_API_BASE              = "${aws_apigatewayv2_api.dashboard_api.api_endpoint}/"
     }
   }
 
