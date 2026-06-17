@@ -141,14 +141,26 @@ def handler(event, context):
     if method == "OPTIONS":
         return {"statusCode": 200, "headers": CORS_HEADERS, "body": ""}
 
-    # Body 파싱
+    # Body 파싱 (API Gateway HTTP API v2 = base64 가능, Function URL = raw)
     body = {}
     raw_body = event.get("body")
     if raw_body:
         try:
+            # base64 인코딩 감지 → 디코드
+            if event.get("isBase64Encoded"):
+                import base64
+                raw_body = base64.b64decode(raw_body).decode("utf-8")
+            # UTF-8 BOM 제거
+            if raw_body.startswith("﻿"):
+                raw_body = raw_body[1:]
             body = json.loads(raw_body)
-        except Exception:
-            return _response(400, {"error": "JSON body 파싱 실패"})
+        except Exception as e:
+            return _response(400, {
+                "error": "JSON body 파싱 실패",
+                "detail": str(e),
+                "rawBodyPreview": str(raw_body)[:200],
+                "isBase64Encoded": event.get("isBase64Encoded", False),
+            })
 
     try:
         if path == "/" or path == "":
