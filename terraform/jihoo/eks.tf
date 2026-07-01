@@ -22,8 +22,11 @@ resource "aws_eks_cluster" "main" {
   }
 
   tags = {
-    Service = "eks"
-    Name    = local.cluster_name
+    Service     = "eks"
+    Name        = local.cluster_name
+    Project     = local.project
+    Environment = local.env
+    Owner       = local.owner
   }
 
   depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
@@ -88,8 +91,11 @@ resource "aws_eks_node_group" "main" {
   }
 
   tags = {
-    Service = "eks"
-    Name    = "${local.project}-${local.owner}-${local.env}-node-group"
+    Service     = "eks"
+    Name        = "${local.project}-${local.owner}-${local.env}-node-group"
+    Project     = local.project
+    Environment = local.env
+    Owner       = local.owner
   }
 
   depends_on = [
